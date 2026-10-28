@@ -1,0 +1,6 @@
+[submodule "vendor/meltyfat"]
+	path = vendor/meltyfat
+	url = https://github.com/JiraLeelas/meltyfat.git
+[submodule "vendor/HT203U-Thermal"]
+	path = vendor/HT203U-Thermal
+	url = https://github.com/cfbird/HT203U-Thermal.git
