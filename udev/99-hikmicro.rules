@@ -1,0 +1,3 @@
+# HIKMICRO / InfiRay USB Thermal Cameras (Pocket 2, Mini, etc.)
+# Allows non-root users access to the camera USB endpoints.
+SUBSYSTEM=="usb", ATTRS{idVendor}=="2bdf", MODE="0666", GROUP="users"
