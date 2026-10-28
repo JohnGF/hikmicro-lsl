@@ -315,13 +315,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--device",
         default=None,
-        help="video capture device path or LSL stream name (e.g. lsl:HIKMICRO_Temperature). Default: auto-detect",
+        help="video capture device path (default: auto-detect)",
     )
     p.add_argument(
         "--backend",
-        choices=("v4l2", "hcusbsdk", "lsl"),
-        default="lsl",  # Make LSL the default for the viewer
-        help="frame source: V4L2 UVC, vendor libHCUSBSDK, or existing LSL stream (default: lsl)",
+        choices=("v4l2", "hcusbsdk"),
+        default="v4l2",
+        help="frame source: V4L2 UVC (default) or vendor libHCUSBSDK",
     )
     p.add_argument("--host", default="127.0.0.1", help="address to bind the web server to")
     p.add_argument("--port", type=int, default=8000, help="port to serve on (default: 8000)")
@@ -386,18 +386,10 @@ def _resolve_device(device_arg: str | None) -> str:
 def _cmd_view(args: argparse.Namespace) -> int:
     from .webview import run_web_viewer
 
-    backend = getattr(args, "backend", "v4l2")
-
-    if backend == "lsl":
-        # If --device was explicitly set (e.g., "lsl:Custom_Stream"), use it,
-        # otherwise default to the standard string the factory expects.
-        device = args.device if args.device is not None else "lsl"
-    elif backend == "hcusbsdk":
+    if getattr(args, "backend", "v4l2") == "hcusbsdk":
         device = "hcusbsdk"
     else:
-        # V4L2 fallback
         device = _resolve_device(args.device)
-
     return run_web_viewer(
         device=device,
         host=args.host,

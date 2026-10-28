@@ -362,6 +362,7 @@ class WebCapture(threading.Thread):
         self._fps_window: deque[float] = deque(maxlen=30)
         self._error_msg: str | None = None
 
+    # -- public ------------------------------------------------------------
     @property
     def error(self) -> str | None:
         return self._error_msg
@@ -375,104 +376,22 @@ class WebCapture(threading.Thread):
             out["history"] = list(self._history)
             return out
 
-    def run(self) -> None:
-        if self.device == "lsl" or self.device.startswith("lsl:"):
-            self._run_lsl()
-        else:
-            self._run_hardware()
-
-    def _run_lsl(self) -> None:
-        """Dedicated, robust loop for LSL streams."""
-        try:
-            source = self._source_factory(self.device)
-            source.open()
-        except Exception as exc:
-            self._error_msg = f"Cannot open LSL stream: {exc}"
-            return
-
-        import cv2
-
+    @property
+    def mode(self) -> str:
         with self._state_lock:
-            self._state["mode"] = "thermal"
+            return str(self._state["mode"])
 
-        while not self._halt.is_set():
-            try:
-                item = source.read_frame()
-                if item is None:
-                    time.sleep(0.01)
-                    continue
+    def _set_mode(self, mode: str) -> None:
+        with self._state_lock:
+            self._state["mode"] = mode
 
-                temps, _ts = item
-
-                # Double check the shape - MUST be 192x256 for the viewer
-                if temps.shape != (192, 256):
-                    # If it's a flat array, reshape it
-                    temps = temps.reshape((192, 256))
-
-                settings = self.control.snapshot()
-                lo = settings["scale_min"]
-                hi = settings["scale_max"]
-
-                # Robust normalization
-                span = max(hi - lo, 1.0)
-                # Clip temps between lo and hi, then scale to 0-255
-                norm = np.clip((np.nan_to_num(temps, nan=lo) - lo) / span * 255.0, 0, 255).astype(
-                    np.uint8
-                )
-
-                # Apply color map
-                if settings["palette"] and self.use_palette:
-                    # Apply colormap. cv2 returns BGR.
-                    bgr = cv2.applyColorMap(norm, cv2.COLORMAP_INFERNO)
-                else:
-                    bgr = cv2.cvtColor(norm, cv2.COLOR_GRAY2BGR)
-
-                # Encode to JPEG (requires BGR, which we have)
-                ok, buf = cv2.imencode(".jpg", bgr, [int(cv2.IMWRITE_JPEG_QUALITY), JPEG_QUALITY])
-                if not ok:
-                    continue
-
-                # Calculate stats
-                center = float(temps[temps.shape[0] // 2, temps.shape[1] // 2])
-                t_min = float(np.nanmin(temps))
-                t_max = float(np.nanmax(temps))
-
-                now = time.monotonic()
-                self._fps_window.append(now)
-                self._history.append(center)
-
-                palette_lo, palette_hi = _palette_span(temps, lo, hi)
-
-                with self._state_lock:
-                    self._state.update(
-                        {
-                            "center_c": round(center, 2),
-                            "min_c": round(t_min, 2),
-                            "max_c": round(t_max, 2),
-                            "palette_top_c": palette_hi,
-                            "palette_bottom_c": palette_lo,
-                            "fps": _fps(self._fps_window),
-                            "color_scale_min": lo,
-                            "color_scale_max": hi,
-                            "range_mode": settings["range_mode"],
-                            "palette": settings["palette"],
-                            "frame_count": self._state["frame_count"] + 1,
-                        }
-                    )
-
-                # Publish the bytes to the HTTP stream
-                self.holder.publish(bytes(buf.tobytes()))
-
-            except Exception as exc:
-                self._error_msg = f"LSL capture error: {exc}"
-                time.sleep(0.1)
-
-        source.close()
-
-    def _run_hardware(self) -> None:
-        """Original hardware capture logic."""
+    def run(self) -> None:
         try:
             source = self._source_factory(self.device)
+        except Exception as exc:  # noqa: BLE001 - surfaced in state
+            self._error_msg = f"cannot open {self.device}: {exc}"
+            return
+        try:
             source.open()
         except (RuntimeError, OSError, NotImplementedError) as exc:
             if not _raw_mode_unavailable(exc):
@@ -481,24 +400,22 @@ class WebCapture(threading.Thread):
                 return
             self._run_video()
             return
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - surfaced in state
             self._error_msg = f"capture failed: {exc}"
             self._halt.set()
             return
         try:
             try:
                 with_meta = _apply_range(source, self.control.snapshot()["range_mode"])
-                with self._state_lock:
-                    self._state["mode"] = "thermal"
+                self._set_mode("thermal")
                 self._loop(source, with_meta)
             finally:
                 source.close()
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - surfaced in state
             self._error_msg = f"capture failed: {exc}"
         finally:
             self._halt.set()
 
-    # ... (keep the rest of the WebCapture class exactly as it was: _run_video, _process_video, _loop, _process) ...
     def _run_video(self) -> None:
         """Stream plain MJPEG video when the node exposes no XTherm raw mode."""
         import cv2
@@ -635,10 +552,8 @@ def _to_celsius(frame: np.ndarray, with_meta: bool, high_range: bool) -> np.ndar
         flat = arr.reshape(-1)
         if flat.size < radiometry.PIXELS:
             return None
-        return (
-            flat[: radiometry.PIXELS]
-            .astype(np.float32)
-            .reshape(radiometry.HEIGHT, radiometry.WIDTH)
+        return flat[: radiometry.PIXELS].astype(np.float32).reshape(
+            radiometry.HEIGHT, radiometry.WIDTH
         )
     grid = arr.astype(np.uint16, copy=False)
     if with_meta:
@@ -721,51 +636,7 @@ def _encode_jpeg(rgb: np.ndarray) -> tuple[bool, bytes]:
     return True, buf.tobytes()
 
 
-class LslThermalSource:
-    """Consumes float32 calibrated Celsius grids from an active LSL stream."""
-
-    def __init__(self, stream_name: str = "HIKMICRO_Temperature", timeout: float = 5.0) -> None:
-        self.stream_name = stream_name
-        self.timeout = timeout
-        self._inlet = None
-
-    def open(self) -> None:
-        from pylsl import resolve_byprop, StreamInlet
-
-        print(f"Resolving LSL stream '{self.stream_name}'...")
-        streams = resolve_byprop("name", self.stream_name, timeout=self.timeout)
-        if not streams:
-            raise RuntimeError(
-                f"LSL stream '{self.stream_name}' not found. "
-                "Ensure 'hikmicro-lsl stream --full-grid' is running."
-            )
-        # Small buffer to prevent browser lag
-        self._inlet = StreamInlet(streams[0], max_buflen=2, max_chunklen=1)
-
-    def read_frame(self):
-        if self._inlet is None:
-            return None
-
-        sample, timestamp = self._inlet.pull_sample(timeout=0.2)
-        if sample is None:
-            return None
-
-        # The webview _to_celsius function expects the frame in item[0]
-        # and it will automatically pass float32 matrices right through.
-        grid = np.asarray(sample, dtype=np.float32).reshape((radiometry.HEIGHT, radiometry.WIDTH))
-        return grid, timestamp
-
-    def close(self) -> None:
-        if self._inlet is not None:
-            self._inlet.close_stream()
-            self._inlet = None
-
-
 def _default_source_factory(device: str) -> Any:
-    if device == "lsl" or device.startswith("lsl:"):
-        stream_name = device.split(":", 1)[1] if ":" in device else "HIKMICRO_Temperature"
-        return LslThermalSource(stream_name=stream_name)
-
     if device == "hcusbsdk":
         from .sdk_source import SdkThermalSource
 

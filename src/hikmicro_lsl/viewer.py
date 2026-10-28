@@ -55,7 +55,6 @@ def _decode_image(jpeg_bytes: bytes) -> t.Any:
 # Headless decode helpers (used by CaptureThread and tests, no Qt dependency)
 # ---------------------------------------------------------------------------
 
-
 def decode_jpeg_to_rgb(jpeg_bytes: bytes) -> t.Optional[t.Any]:
     """Decode MJPG JPEG bytes to an (H, W, 3) uint8 numpy array."""
     if not jpeg_bytes:
@@ -63,9 +62,7 @@ def decode_jpeg_to_rgb(jpeg_bytes: bytes) -> t.Optional[t.Any]:
     return _decode_image(jpeg_bytes)
 
 
-def parse_frame_data(
-    jpeg_bytes: bytes, reader: OverlayReader, use_palette: bool = True
-) -> t.Optional[FrameData]:
+def parse_frame_data(jpeg_bytes: bytes, reader: OverlayReader, use_palette: bool = True) -> t.Optional[FrameData]:
     """Decode JPEG and extract overlay metrics into a dict.
 
     Runs on the capture thread (or a second worker). Returns ``None`` if
@@ -123,16 +120,13 @@ def _ensure_qt() -> None:
         from PySide6 import QtCore as _c  # type: ignore
         from PySide6 import QtGui as _g  # type: ignore
         from PySide6 import QtWidgets as _w  # type: ignore
-
         QtCore, QtGui, QtWidgets = _c, _g, _w
     if pg is None:
         import pyqtgraph as _pg  # type: ignore
-
         pg = _pg
     if ImageQtMod is None:
         try:
             from PySide6 import QtGui as _qtgui_mod
-
             if hasattr(_qtgui_mod, "QtImage"):
                 ImageQtMod = _qtgui_mod
             else:
@@ -144,7 +138,6 @@ def _ensure_qt() -> None:
 # ---------------------------------------------------------------------------
 # Capture thread
 # ---------------------------------------------------------------------------
-
 
 class CaptureThread(QtCore.QThread if QtCore else object):  # type: ignore[misc]
     """Background thread that reads MJPG JPEG frames from the UVC device."""
@@ -162,7 +155,6 @@ class CaptureThread(QtCore.QThread if QtCore else object):  # type: ignore[misc]
         # define signals only when Qt loaded
         if QtCore is not None:
             from PySide6.QtCore import Signal
-
             self.frame_ready = Signal(bytes)  # type: ignore[method-assign]
             self.frame_dropped = Signal()  # type: ignore[method-assign]
             self.error = Signal(str)  # type: ignore[method-assign]
@@ -170,7 +162,6 @@ class CaptureThread(QtCore.QThread if QtCore else object):  # type: ignore[misc]
     def run(self) -> None:  # noqa: N802
         try:
             import cv2
-
             self._cap = cv2.VideoCapture(self._device)
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
@@ -208,7 +199,6 @@ class CaptureThread(QtCore.QThread if QtCore else object):  # type: ignore[misc]
 # ---------------------------------------------------------------------------
 # Worker that parses overlay on a separate thread (keeps GUI responsive)
 # ---------------------------------------------------------------------------
-
 
 class ParseWorker(QtCore.QThread if QtCore else object):  # type: ignore[misc]
     parsed = None  # set in _ensure_qt
@@ -257,7 +247,6 @@ class ParseWorker(QtCore.QThread if QtCore else object):  # type: ignore[misc]
     def _ensure_signal(self) -> None:
         if ParseWorker.parsed is None:
             from PySide6.QtCore import Signal
-
             ParseWorker.parsed = Signal(t.Dict)  # type: ignore[attr-defined]
 
     def stop(self) -> None:
@@ -268,7 +257,6 @@ class ParseWorker(QtCore.QThread if QtCore else object):  # type: ignore[misc]
 # ---------------------------------------------------------------------------
 # Gradient legend widget
 # ---------------------------------------------------------------------------
-
 
 class GradientLegend(QtWidgets.QWidget if QtWidgets else object):  # type: ignore[misc]
     """Custom horizontal gradient legend showing the palette bar with temp labels."""
@@ -311,7 +299,6 @@ class GradientLegend(QtWidgets.QWidget if QtWidgets else object):  # type: ignor
 # ---------------------------------------------------------------------------
 # Main thermal viewer window
 # ---------------------------------------------------------------------------
-
 
 class ThermalViewer(QtWidgets.QMainWindow if QtWidgets else object):  # type: ignore[misc]
     """Main viewer window with thermal image, readouts, legend, sparkline."""
@@ -438,7 +425,9 @@ class ThermalViewer(QtWidgets.QMainWindow if QtWidgets else object):  # type: ig
     def _on_frame(self, jpeg: bytes) -> None:
         if self._worker is not None and not self._worker.enqueue(jpeg, time.monotonic()):
             # queue full -> frame dropped
-            self._status_label.setText(f"{self._device} | fps -- | drops: ? | (parse backlog)")
+            self._status_label.setText(
+                f"{self._device} | fps -- | drops: ? | (parse backlog)"
+            )
 
     def _on_parsed(self, data: FrameData) -> None:
         self._current_data = data
@@ -453,7 +442,6 @@ class ThermalViewer(QtWidgets.QMainWindow if QtWidgets else object):  # type: ig
                 inv = inverse_palette(rgb, self.reader, data["overlay"])
                 # normalize depth to 0..255 and apply palette
                 import numpy as np
-
                 d = inv
                 mn = float(np.nanmin(d)) if d.size else 0.0
                 mx = float(np.nanmax(d)) if d.size else 1.0
@@ -487,7 +475,6 @@ class ThermalViewer(QtWidgets.QMainWindow if QtWidgets else object):  # type: ig
     def _update_readouts(self, data: FrameData) -> None:
         def fmt(v: t.Optional[float]) -> str:
             return f"{v:.1f}" if v is not None else "--"
-
         self._lbl_center.setText(fmt(data["center_c"]))
         self._lbl_max.setText(fmt(data["max_c"]))
         self._lbl_min.setText(fmt(data["min_c"]))
@@ -500,7 +487,9 @@ class ThermalViewer(QtWidgets.QMainWindow if QtWidgets else object):  # type: ig
             warn = " temperatures unavailable - install the [ocr] extra"
         self._warn_banner.setText(warn)
         stale_str = " (stale)" if self._stale else ""
-        self._status_label.setText(f"{self._device} | fps: {fps} | drops: {drops}{stale_str}")
+        self._status_label.setText(
+            f"{self._device} | fps: {fps} | drops: {drops}{stale_str}"
+        )
 
     def _update_sparkline(self, data: FrameData) -> None:
         if data["center_c"] is None:
@@ -561,7 +550,6 @@ class ThermalViewer(QtWidgets.QMainWindow if QtWidgets else object):  # type: ig
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
-
 
 def run_viewer(device: str, use_palette: bool = True, fullscreen: bool = False) -> int:
     """Construct QApplication, the window, threads, wire signals, start, run."""
